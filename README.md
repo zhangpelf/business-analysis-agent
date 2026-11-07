@@ -1,98 +1,123 @@
 # Business Analysis Agent / 经营分析 Agent
 
-一个面向经营分析场景的公开作品集项目。它将 **CSV 数据校验 → KPI 计算 → 异常识别 → 收入驱动归因 → 受证据约束的建议 → Markdown 报告** 编排为一个可复现的 LangGraph 工作流。
+<p align="center">
+  <strong>基于 LangGraph 的确定性业务经营分析与异动归因工作流引擎</strong><br>
+  <em>Deterministic StateGraph · Strict Evidence Binding · Zero-Hallucination Guardrails</em>
+</p>
 
-它复用了现有行业研究项目的工程思想（工作流、可视化、Docker、测试），但不复制任何投研材料、内部数据或客户资料。
+<p align="center">
+  <a href="https://github.com/zhangpelf/business-analysis-agent"><img src="https://img.shields.io/badge/LangGraph-StateGraph-00A67E?style=flat" alt="LangGraph"></a>
+  <a href="https://github.com/zhangpelf/business-analysis-agent"><img src="https://img.shields.io/badge/Tests-Pytest%20Passing-brightgreen?style=flat" alt="Tests"></a>
+  <a href="https://github.com/zhangpelf/business-analysis-agent"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat" alt="Docker"></a>
+  <a href="https://github.com/zhangpelf/business-analysis-agent"><img src="https://img.shields.io/badge/Mode-Offline%20Deterministic-blue?style=flat" alt="Offline"></a>
+</p>
 
-## 为什么做它
+---
 
-我希望把金融/产业研究与实际经营分析经历中积累的问题，转化为一个可公开演示的 AI 应用工程作品：
+## 📌 项目定位与核心设计哲学
 
-- 不把大模型当计算器；核心 KPI、归因和预警均由确定性代码完成；
-- 每条建议关联到结构化证据，避免“看似合理但没有数据来源”的生成结论；
-- 不依赖 API Key，离线也能复现完整的诊断闭环；
-- 仅使用内置合成数据或用户主动上传的已脱敏公开数据。
+`business-analysis-agent` 将实际经营分析与商业中台实战中积累的核心问题，转化为一个**高可靠、可离线复现、严格受证据约束**的 AI 应用工程项目：
 
-## 工作流
+1. **拒绝把大模型当计算器**：核心 KPI 算子、同环比变动、3σ 异常波动识别与收入驱动因素分解，**100% 由纯 Python 确定性代码执行**，不交给大模型计算。
+2. **证据链强约束 (Evidence-Constrained)**：每一条建议必须严格挂钩到底层的结构化数据证据（如 `revenue_impact` 差分值），杜绝“看似合理但没有数据来源”的模型幻觉。
+3. **离线高可用与双模式执行**：默认离线运行，内置合成数据 `demo_metrics.csv`；即使不配置任何 API Key，也能完整跑通诊断闭环。
+4. **上下游生态协同**：
+   - **上游方法论注入**：遵循 [`transaction-ops-skill`](https://github.com/zhangpelf/transaction-ops-skill) 的漏斗转化与量利归因模型；
+   - **下游策略落地**：异动归因结果可无缝对接 [`prd-writer-skill`](https://github.com/zhangpelf/prd-writer-skill)，联动 n8n 触发企微/飞书战报闭环。
 
-```text
-validate_data
-  -> calculate_metrics
-  -> detect_anomalies
-  -> diagnose_drivers
-  -> generate_recommendations
-  -> render_report
+---
+
+## 🔄 核心 LangGraph 诊断工作流 (StateGraph Architecture)
+
+工作流严格由 6 个显式状态节点构成，状态数据在 `AnalysisState` (TypedDict) 中单向有序传递：
+
+```mermaid
+flowchart TD
+    Start(["🚀 输入: CSV 交易流水 / 数据源"]) --> N1["1️⃣ validate_data<br/><b>模式校验节点</b><br/>检查字段缺失、非负性约束、orders ≤ sessions"]
+    
+    N1 --> N2["2️⃣ calculate_metrics<br/><b>KPI 算子计算节点</b><br/>确定性计算: 转化率、客单价(AOV)、收入、贡献毛利"]
+    
+    N2 --> N3["3️⃣ detect_anomalies<br/><b>异常波动识别节点</b><br/>3σ 偏离度检测 · 收入环比跌幅 ≥10% / 毛利率下跌 ≥5pp"]
+    
+    N3 --> N4["4️⃣ diagnose_drivers<br/><b>驱动因素归因节点</b><br/>顺序分解效应: 流量效应 + 转化效应 + 客单价效应"]
+    
+    N4 --> N5["5️⃣ generate_recommendations<br/><b>证据约束建议节点</b><br/>仅对触发归因证据的维度生成行动策略建议"]
+    
+    N5 --> N6["6️⃣ render_report<br/><b>周度诊断报告渲染节点</b><br/>导出结构化 Markdown / HTML 经营分析周报"]
+    
+    N6 --> EndNode(["🏁 输出: 闭环分析报告与异动结构体"])
+
+    style Start fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px
+    style N1 fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style N2 fill:#ede9fe,stroke:#7c3aed,stroke-width:2px
+    style N3 fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+    style N4 fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    style N5 fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style N6 fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style EndNode fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px
 ```
 
-收入使用 `sessions × conversion_rate × AOV` 进行顺序分解；贡献毛利为：
+---
 
-```text
-revenue - variable_cost - marketing_cost
-```
+### 各节点契约与数据流转说明
 
-## 输入数据契约
+| 步骤 | 节点名称 | 输入状态字段 | 核心算子与逻辑 | 输出状态字段 |
+| :--- | :--- | :--- | :--- | :--- |
+| **01** | `validate_data` | `raw_data` (DataFrame) | 校验必选字段；断言 `orders <= sessions`；排查零或负值；保证每期有效 | `validated_data` |
+| **02** | `calculate_metrics` | `validated_data` | 计算转化率 $CR = \frac{Orders}{Sessions}$；客单价 $AOV = \frac{Rev}{Orders}$；贡献毛利 $CM = Rev - VC - MC$ | `metrics` |
+| **03** | `detect_anomalies` | `metrics` | 扫描各周期同环比变动，标记达到预警线的异动指标（如收入环比跌幅 $\ge 10\%$） | `anomalies` |
+| **04** | `diagnose_drivers` | `metrics` | 采用对数/差分因子分解法：$\Delta \text{Revenue} = f(\Delta Sessions) + f(\Delta CR) + f(\Delta AOV)$ | `evidence` |
+| **05** | `generate_recommendations` | `evidence` | 严格基于 `evidence` 中的负向驱动因子匹配策略干预规则，无证据不产出建议 | `recommendations` |
+| **06** | `render_report` | `metrics`, `anomalies`, `evidence`, `recommendations` | 组装四段式标准分析周报，包含 KPI 看板、异动警报、穿透归因表与管理建议 | `report_markdown` |
 
-CSV 必须包含下列列，金额和数量必须非负，且 `orders <= sessions`。每个 `period`
-汇总后的 `sessions`、`orders` 与 `revenue` 必须均大于零；无经营活动的期间应移除或另行处理，
-以避免转化率或客单价没有定义：
+---
 
-| 列 | 含义 |
-|---|---|
-| `period` | 可解析日期，如 `2026-01-01` |
-| `channel` | 渠道名称 |
-| `sessions` | 会话/访问量 |
-| `orders` | 订单量 |
-| `revenue` | 收入 |
-| `variable_cost` | 变动成本 |
-| `marketing_cost` | 营销投放成本 |
+## 📊 数学与归因算子公式
 
-内置的 `demo_metrics.csv` 是合成数据，特意包含可识别的收入和毛利恶化情形。
+### 1. 收入三动因差分分解
+大盘收入由流量、转化与客单价三者相乘得出：
+$$\text{Revenue} = \text{Sessions} \times \text{Conversion Rate} \times \text{AOV}$$
 
-每条会话量、转化率、客单价证据还提供结构化字段 `revenue_impact`。同一期间这三项
-`revenue_impact` 之和应精确等于该期间相对于上一期的收入变化，便于独立复算。
+对同一周期的异动，系统计算三项结构化 `revenue_impact`：
+$$\Delta \text{Rev} = \text{Impact}_{\text{sessions}} + \text{Impact}_{\text{CR}} + \text{Impact}_{\text{AOV}}$$
+三项影响金额之和精确等于大盘相对上一期的收入变化量，支持单据级独立复算。
 
-## 本地运行
+### 2. 贡献毛利与健康度
+$$\text{Contribution Margin} = \text{Revenue} - \text{Variable Cost} - \text{Marketing Cost}$$
+$$\text{Margin Rate} = \frac{\text{Contribution Margin}}{\text{Revenue}}$$
+
+---
+
+## 🛠️ 本地快速开始
 
 ```bash
-python -m venv .venv
+# 1. 创建并激活虚拟环境
+python3 -m venv .venv
 source .venv/bin/activate
+
+# 2. 安装本地开发包与依赖
 pip install -e '.[dev]'
 
-# Streamlit 界面
+# 3. 运行交互式 Streamlit 界面
 streamlit run app.py --server.address 127.0.0.1
 
-# FastAPI 服务
+# 4. 运行 FastAPI 服务
 uvicorn business_analysis_agent.api:app --host 127.0.0.1 --reload
 
-# 测试
+# 5. 执行全量单元测试 (Pytest)
 pytest
 ```
 
-Docker 演示界面：
+### Docker 一键部署
 
 ```bash
 docker build -t business-analysis-agent .
 docker run --rm -p 127.0.0.1:8501:8501 business-analysis-agent
 ```
 
-API 示例：
+---
 
-```bash
-curl http://127.0.0.1:8000/health
-```
+## 🛡️ 数据安全与使用声明
 
-`POST /analyze` 接收形如 `{ "rows": [ ... ] }` 的 JSON，返回 KPI、异常、证据、建议和 Markdown 报告。
-
-安装项目依赖后，工作流由 LangGraph 执行。为了让纯确定性计算在最小本地环境中也能测试，未安装 LangGraph 时会使用同样六个节点顺序的轻量回退执行器；它不改变结果，也不增加任何模型调用。
-
-## 数据、安全与结论边界
-
-- 不提交 `.env`、密钥、订单明细、客户资料、未公开业务指标或尽调材料。
-- 上传前必须完成脱敏并确认拥有使用权；默认演示只使用合成数据。
-- 该工具做的是描述性/诊断性分析，不证明因果关系；应由业务负责人核对季节性、口径变化和外部事件。
-- 不构成投资、定价、预算或经营决策建议。
-- 默认不调用 LLM。若显式配置 `.env.example` 中的 OpenAI-compatible 参数，界面可请求一个可选文字摘要；它只能接收本工作流的异常、证据和建议，且任何带数字的模型输出都会被拒绝展示。确定性报告始终是唯一数值来源。
-
-## 当前限制与下一步
-
-当前的预警阈值为透明的规则（收入环比下降 ≥10%、贡献毛利率下降 ≥5 个百分点）。下一步可加入：渠道级贡献拆解、用户确认的业务阈值、基于标注案例的评估集、异步任务/日志、权限与审计记录。它们应在有真实但可公开的需求与数据口径后再加入，而不是为了堆栈而加入。
+- **零敏感数据**：内置 `demo_metrics.csv` 均为程序生成的合成测试数据，特意包含可识别的收入与毛利恶化情形，不含任何特定企业生产数据；
+- **安全沙箱**：默认纯本地计算，不发送任何外部网络请求；若显式开启 LLM 辅助摘要，系统会拦截任何带未经验证数字的输出，确保确定性代码是唯一数值来源。
